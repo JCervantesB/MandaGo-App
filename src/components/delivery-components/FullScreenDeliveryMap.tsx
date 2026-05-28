@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Pressable } from 'react-native';
-import MapView, { Marker, Polyline } from 'react-native-maps';
-import { Package, Flag, Navigation, ChevronDown, ChevronUp } from 'lucide-react-native';
+import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
+import { Map, Marker, Camera, Layer, GeoJSONSource } from '@maplibre/maplibre-react-native';
+import { MapPin, ChevronDown, ChevronUp, Bike } from 'lucide-react-native';
 import { useCurrentLocation, useLocationWatcher } from '@/hooks/use-current-location';
 import { getRoute } from '@/services/geoapify-service';
 import { appColors } from '@/theme/theme';
@@ -22,42 +22,29 @@ interface FullScreenDeliveryMapProps {
 }
 
 interface RouteData {
-  geometry: Coordinates[];
+  geometry: any;
   distance: number;
 }
 
 const ROUTE_COLORS = {
   toPickup: '#3B82F6',
-  toDelivery: appColors.success,
+  toDelivery: '#22C55E',
 };
 
-// Extrae coordenadas de la geometría de la respuesta de Geoapify
-function extractCoordinatesFromGeometry(geometry: unknown): Coordinates[] {
-  if (!Array.isArray(geometry) || geometry.length === 0) return [];
+function flattenRouteCoordinates(geometry: any): [number, number][] {
+  if (!geometry?.type || !geometry?.coordinates) return [];
 
-  const rawCoords = geometry as unknown[];
-  const firstItem = rawCoords[0];
-
-  if (typeof firstItem === 'number') {
-    return Array.from({ length: Math.floor(rawCoords.length / 2) }, (_, i) => ({
-      lat: rawCoords[i * 2 + 1] as number,
-      lon: rawCoords[i * 2] as number,
-    }));
+  if (geometry.type === 'LineString') {
+    return geometry.coordinates;
   }
 
-  if (Array.isArray(firstItem) && firstItem.length > 0) {
-    if (typeof firstItem[0] === 'number') {
-      return (geometry as number[][]).map(coord => ({ lat: coord[1], lon: coord[0] }));
-    }
-    if (Array.isArray(firstItem[0]) && typeof firstItem[0][0] === 'number') {
-      return (geometry as number[][][])[0].map(coord => ({ lat: coord[1], lon: coord[0] }));
-    }
+  if (geometry.type === 'MultiLineString') {
+    return geometry.coordinates.flat();
   }
 
   return [];
 }
 
-// Mapa a pantalla completa con rutas para el repartidor
 export function FullScreenDeliveryMap({
   originLat,
   originLng,
@@ -67,38 +54,28 @@ export function FullScreenDeliveryMap({
   driverLocation: externalDriverLocation,
   onDriverLocationUpdate,
 }: FullScreenDeliveryMapProps) {
-  const mapRef = useRef<MapView>(null);
   const { getCurrentLocation } = useCurrentLocation();
+  const cameraRef = useRef<any>(null);
   const [internalDriverLocation, setInternalDriverLocation] = useState<{ lat: number; lon: number } | null>(null);
-  const [routeToPickup, setRouteToPickup] = useState<RouteData | null>(null);
-  const [routeToDelivery, setRouteToDelivery] = useState<RouteData | null>(null);
+  const [routeToPickup, setRouteToPickup] = useState<[number, number][] | null>(null);
+  const [routeToDelivery, setRouteToDelivery] = useState<[number, number][] | null>(null);
+  const [pickupDistance, setPickupDistance] = useState<number>(0);
+  const [deliveryDistance, setDeliveryDistance] = useState<number>(0);
   const [isLoadingRoutes, setIsLoadingRoutes] = useState(false);
   const [legendCollapsed, setLegendCollapsed] = useState(false);
-  const [mapReady, setMapReady] = useState(false);
 
-  // Combinar ubicación externa con interna
   const driverLocation = externalDriverLocation ?? internalDriverLocation;
 
-  // Convertir coordenadas a números
   const originLatNum = parseFloat(originLat);
   const originLngNum = parseFloat(originLng);
   const destLatNum = parseFloat(destLat);
   const destLngNum = parseFloat(destLng);
 
-  // Verificar si hay coordenadas válidas
   const hasValidCoords =
     !isNaN(originLatNum) && !isNaN(originLngNum) && !isNaN(destLatNum) && !isNaN(destLngNum);
 
-  // Determinar si se debe mostrar el mapa en función del tipo de ruta
   const isDelivered = routeType === 'none';
-  const isDriverActive = routeType === 'driver-to-pickup' || routeType === 'pickup-to-delivery' || routeType === 'both';
-  const showDriverLocation = isDriverActive && !!driverLocation;
-  const showOriginMarker = routeType !== 'pickup-to-delivery';
-  const showDestMarker = routeType !== 'driver-to-pickup';
-  const showRouteToPickup = (routeType === 'driver-to-pickup' || routeType === 'both') && !!routeToPickup;
-  const showRouteToDelivery = routeType !== 'driver-to-pickup' && !!routeToDelivery;
 
-  // Manejar actualización de ubicación del conductor
   const handleLocationUpdate = useCallback(
     (location: { latitude: number; longitude: number }) => {
       const loc = { lat: location.latitude, lon: location.longitude };
@@ -108,11 +85,9 @@ export function FullScreenDeliveryMap({
     [onDriverLocationUpdate]
   );
 
-  // Escuchar cambios de ubicación del conductor
   useLocationWatcher(handleLocationUpdate, 10000);
 
-  // Obtener ubicación actual del conductor si hay coordenadas válidas
-   useEffect(() => {
+  useEffect(() => {
     if (!hasValidCoords) return;
     getCurrentLocation().then((location) => {
       if (location) {
@@ -123,18 +98,14 @@ export function FullScreenDeliveryMap({
     });
   }, [hasValidCoords, getCurrentLocation, onDriverLocationUpdate]);
 
-  // Calcular rutas
-  // 1. Ruta del conductor: conductor → recogida (cuando el conductor va a recoger un pedido)
-  // 2. Ruta del conductor: conductor → entrega (cuando el conductor va a entregar el pedido)
   const calculateRoutes = useCallback(async () => {
-    if (!mapReady || !hasValidCoords) return;
+    if (!hasValidCoords) return;
     if (isDelivered) return;
 
     setIsLoadingRoutes(true);
 
     const promises: Promise<void>[] = [];
 
-    // Ruta del conductor: conductor → recogida (cuando el conductor va a recoger un pedido)
     if (routeType === 'driver-to-pickup' || routeType === 'both') {
       if (driverLocation) {
         promises.push(
@@ -143,15 +114,15 @@ export function FullScreenDeliveryMap({
             { lat: originLatNum, lon: originLngNum },
           ]).then((res) => {
             if (res.features.length > 0) {
-              const coords = extractCoordinatesFromGeometry(res.features[0].geometry.coordinates);
-              setRouteToPickup({ geometry: coords, distance: res.features[0].properties.distance });
+              const coords = flattenRouteCoordinates(res.features[0].geometry);
+              setRouteToPickup(coords);
+              setPickupDistance(res.features[0].properties.distance);
             }
           }).catch(() => {})
         );
       }
     }
 
-    // Ruta del conductor: conductor → entrega (cuando el conductor va a entregar el pedido)
     if (routeType !== 'driver-to-pickup') {
       const startLat = routeType === 'pickup-to-delivery' && driverLocation ? driverLocation.lat : originLatNum;
       const startLon = routeType === 'pickup-to-delivery' && driverLocation ? driverLocation.lon : originLngNum;
@@ -162,8 +133,9 @@ export function FullScreenDeliveryMap({
           { lat: destLatNum, lon: destLngNum },
         ]).then((res) => {
           if (res.features.length > 0) {
-            const coords = extractCoordinatesFromGeometry(res.features[0].geometry.coordinates);
-            setRouteToDelivery({ geometry: coords, distance: res.features[0].properties.distance });
+            const coords = flattenRouteCoordinates(res.features[0].geometry);
+            setRouteToDelivery(coords);
+            setDeliveryDistance(res.features[0].properties.distance);
           }
         }).catch(() => {})
       );
@@ -171,54 +143,23 @@ export function FullScreenDeliveryMap({
 
     await Promise.all(promises);
     setIsLoadingRoutes(false);
-  }, [mapReady, hasValidCoords, routeType, driverLocation, originLatNum, originLngNum, destLatNum, destLngNum, isDelivered]);
+  }, [hasValidCoords, routeType, driverLocation, originLatNum, originLngNum, destLatNum, destLngNum, isDelivered]);
 
-  // Calcular rutas cuando el mapa está listo
   useEffect(() => {
-    let timeout: ReturnType<typeof setTimeout>;
-    if (mapReady) {
-      timeout = setTimeout(() => calculateRoutes(), 100);
+    if (hasValidCoords) {
+      calculateRoutes();
     }
-    return () => clearTimeout(timeout);
-  }, [mapReady, calculateRoutes]);
+  }, [hasValidCoords, calculateRoutes]);
 
-  // Centrar el mapa en los marcadores
-  const centerMapOnMarkers = useCallback(() => {
-    if (!mapRef.current || !hasValidCoords) return;
-
-    let markers: { lat: number; lon: number }[] = [];
-
-    if (isDelivered) {
-      markers = [
-        { lat: originLatNum, lon: originLngNum },
-        { lat: destLatNum, lon: destLngNum },
-      ];
-    } else if (routeType === 'driver-to-pickup') {
-      if (driverLocation) markers.push(driverLocation);
-      markers.push({ lat: originLatNum, lon: originLngNum });
-    } else if (routeType === 'pickup-to-delivery') {
-      markers.push({ lat: originLatNum, lon: originLngNum });
-      markers.push({ lat: destLatNum, lon: destLngNum });
-    } else {
-      // 'both'
-      if (driverLocation) markers.push(driverLocation);
-      markers.push({ lat: originLatNum, lon: originLngNum });
-      markers.push({ lat: destLatNum, lon: destLngNum });
+  useEffect(() => {
+    if (cameraRef.current && driverLocation) {
+      cameraRef.current.flyTo({
+        center: [driverLocation.lon, driverLocation.lat],
+        zoom: 13,
+        duration: 800,
+      });
     }
-
-    const lats = markers.map((m) => m.lat);
-    const lons = markers.map((m) => m.lon);
-
-    mapRef.current.animateToRegion(
-      {
-        latitude: (Math.min(...lats) + Math.max(...lats)) / 2,
-        longitude: (Math.min(...lons) + Math.max(...lons)) / 2,
-        latitudeDelta: Math.abs(Math.max(...lats) - Math.min(...lats)) * 1.5 + 0.05,
-        longitudeDelta: Math.abs(Math.max(...lons) - Math.min(...lons)) * 1.5 + 0.05,
-      },
-      500
-    );
-  }, [hasValidCoords, isDelivered, routeType, driverLocation, originLatNum, originLngNum, destLatNum, destLngNum]);
+  }, [driverLocation]);
 
   if (!hasValidCoords) {
     return (
@@ -228,72 +169,109 @@ export function FullScreenDeliveryMap({
     );
   }
 
+  const MarkerDrop = ({ color, label }: { color: string; label: string }) => (
+    <View className="items-center">
+      <Text className="text-xs font-bold text-white mb-0.5 px-1.5 py-0.5 rounded" style={{ backgroundColor: color }}>{label}</Text>
+      <View className="items-center justify-center w-9 h-9 rounded-full" style={{ backgroundColor: color }}>
+        <MapPin size={20} color="white" strokeWidth={2.5} />
+      </View>
+    </View>
+  );
+
+  const centerLat = driverLocation?.lat ?? originLatNum;
+  const centerLon = driverLocation?.lon ?? originLngNum;
+
+  const routeToPickupDistance = 0;
+  const routeToDeliveryDistance = 0;
+
   return (
     <View style={styles.container}>
-      <MapView
-        key={`map-${originLatNum}-${originLngNum}-${destLatNum}-${destLngNum}`}
-        ref={mapRef}
-        style={styles.map}
-        showsUserLocation
-        showsMyLocationButton
-        showsCompass={false}
-        onMapReady={() => {
-          setMapReady(true);
-          centerMapOnMarkers();
-        }}
+      <Map
+        style={{ flex: 1 }}
+        mapStyle="https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"
       >
-        {/* Ruta del conductor: conductor → recogida */}
-        {showRouteToPickup && (
-          <Polyline
-            coordinates={routeToPickup.geometry.map((c) => ({ latitude: c.lat, longitude: c.lon }))}
-            strokeColor={ROUTE_COLORS.toPickup}
-            strokeWidth={5}
-            lineDashPattern={[12, 6]}
-          />
+        <Camera
+          ref={cameraRef}
+          initialViewState={{ center: [centerLon, centerLat], zoom: 13 }}
+        />
+
+        {routeType !== 'pickup-to-delivery' && hasValidCoords && (
+          <Marker id="pickup" lngLat={[originLngNum, originLatNum]}>
+            <MarkerDrop color={ROUTE_COLORS.toPickup} label="Recoger" />
+          </Marker>
         )}
 
-        {/* Ruta del conductor: conductor → entrega */}
-        {showRouteToDelivery && (
-          <Polyline
-            coordinates={routeToDelivery.geometry.map((c) => ({ latitude: c.lat, longitude: c.lon }))}
-            strokeColor={ROUTE_COLORS.toDelivery}
-            strokeWidth={5}
-          />
+        {routeType !== 'driver-to-pickup' && hasValidCoords && (
+          <Marker id="delivery" lngLat={[destLngNum, destLatNum]}>
+            <MarkerDrop color={ROUTE_COLORS.toDelivery} label="Entregar" />
+          </Marker>
         )}
 
-        {/* Ubicación del conductor en el mapa */}
-        {showDriverLocation && (
-          <Marker coordinate={{ latitude: driverLocation!.lat, longitude: driverLocation!.lon }} title="Tu ubicación">
-            <View style={styles.markerContainer}>
-              <Navigation size={20} color="white" />
+        {driverLocation && (
+          <Marker id="driver" lngLat={[driverLocation.lon, driverLocation.lat]}>
+            <View className="items-center">
+              <View className="items-center justify-center w-10 h-10 rounded-full" style={{ backgroundColor: '#3B82F6' }}>
+                <Bike size={22} color="white" strokeWidth={2.5} />
+              </View>
             </View>
           </Marker>
         )}
 
-        {/* Punto de recogida en el mapa */}
-        {showOriginMarker && (
-          <Marker coordinate={{ latitude: originLatNum, longitude: originLngNum }} title="Punto de recogida">
-            <View style={[styles.markerContainer, styles.pickupMarker]}>
-              <Package size={20} color="white" />
-            </View>
-          </Marker>
+        {routeToPickup && routeToPickup.length > 0 && (
+          <GeoJSONSource
+            id="routeToPickup"
+            data={{
+              type: 'Feature',
+              properties: {},
+              geometry: { type: 'LineString', coordinates: routeToPickup },
+            }}
+          >
+            <Layer
+              id="routeToPickupLine"
+              type="line"
+              source="routeToPickup"
+              paint={{
+                "line-color": ROUTE_COLORS.toPickup,
+                "line-width": 4,
+                "line-opacity": 0.8,
+                "line-dasharray": [2, 1.5],
+              }}
+              layout={{ "line-join": "round", "line-cap": "round" }}
+            />
+          </GeoJSONSource>
         )}
 
-        {/* Punto de entrega en el mapa */}
-        {showDestMarker && (
-          <Marker coordinate={{ latitude: destLatNum, longitude: destLngNum }} title="Punto de entrega">
-            <View style={[styles.markerContainer, styles.deliveryMarker]}>
-              <Flag size={20} color="white" />
-            </View>
-          </Marker>
+        {routeToDelivery && routeToDelivery.length > 0 && (
+          <GeoJSONSource
+            id="routeToDelivery"
+            data={{
+              type: 'Feature',
+              properties: {},
+              geometry: { type: 'LineString', coordinates: routeToDelivery },
+            }}
+          >
+            <Layer
+              id="routeToDeliveryLine"
+              type="line"
+              source="routeToDelivery"
+              paint={{
+                "line-color": ROUTE_COLORS.toDelivery,
+                "line-width": 4,
+                "line-opacity": 0.8,
+              }}
+              layout={{ "line-join": "round", "line-cap": "round" }}
+            />
+          </GeoJSONSource>
         )}
-      </MapView>
+      </Map>
 
-      {/* Panel de rutas y ubicaciones */}
       <View style={styles.legendContainer}>
         <Pressable onPress={() => setLegendCollapsed(!legendCollapsed)} style={styles.legendHeader}>
           <Text style={styles.legendTitle}>{isDelivered ? 'Entrega completada' : 'Rutas'}</Text>
-          {legendCollapsed ? <ChevronUp size={16} color={appColors.textMuted} /> : <ChevronDown size={16} color={appColors.textMuted} />}
+          {legendCollapsed
+            ? <ChevronUp size={16} color={appColors.textMuted} />
+            : <ChevronDown size={16} color={appColors.textMuted} />
+          }
         </Pressable>
 
         {!legendCollapsed && (
@@ -305,23 +283,23 @@ export function FullScreenDeliveryMap({
               </View>
             )}
 
-            {showRouteToPickup && (
+            {routeToPickup && routeToPickup.length > 0 && (
               <View style={styles.routeRow}>
                 <View style={styles.routeRowLeft}>
                   <View style={[styles.routeDot, { backgroundColor: ROUTE_COLORS.toPickup }]} />
                   <Text style={styles.routeLabel}>Ubicación → Recoger</Text>
                 </View>
-                <Text style={styles.routeDistance}>{(routeToPickup!.distance / 1000).toFixed(1)} km</Text>
+                <Text style={styles.routeDistance}>{(pickupDistance / 1000).toFixed(1)} km</Text>
               </View>
             )}
 
-            {showRouteToDelivery && (
+            {routeToDelivery && routeToDelivery.length > 0 && (
               <View style={styles.routeRow}>
                 <View style={styles.routeRowLeft}>
                   <View style={[styles.routeDot, { backgroundColor: ROUTE_COLORS.toDelivery }]} />
                   <Text style={styles.routeLabel}>Recoger → Entregar</Text>
                 </View>
-                <Text style={styles.routeDistance}>{(routeToDelivery!.distance / 1000).toFixed(1)} km</Text>
+                <Text style={styles.routeDistance}>{(deliveryDistance / 1000).toFixed(1)} km</Text>
               </View>
             )}
           </View>
@@ -333,7 +311,6 @@ export function FullScreenDeliveryMap({
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  map: { flex: 1 },
   errorContainer: {
     flex: 1,
     backgroundColor: '#F1F5F9',
@@ -341,23 +318,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   errorText: { fontSize: 14, color: appColors.textMuted },
-  markerContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#3B82F6',
-    borderWidth: 3,
-    borderColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 6,
-  },
-  pickupMarker: { backgroundColor: appColors.success },
-  deliveryMarker: { backgroundColor: appColors.mapDestination },
   legendContainer: {
     position: 'absolute',
     top: 50,

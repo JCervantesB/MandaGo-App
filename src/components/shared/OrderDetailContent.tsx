@@ -4,7 +4,7 @@ import { ScrollView, Text, View } from 'react-native';
 import { ShipmentMap } from '@/components/shipment/ShipmentMap';
 import { appColors } from '@/theme/theme';
 import { STATUS_CONFIG } from '@/types/delivery-order';
-import { formatDateFullFull } from '@/utils/date-formatters';
+import { formatDateFull } from '@/utils/date-formatters';
 
 // Contenido compartido para mostrar detalle de orden (mapa, datos del paquete, destinatario)
 export interface OrderDetailData {
@@ -73,12 +73,12 @@ export function OrderDetailContent({ order, showServiceFee = false, showMap = tr
       )}
 
       {showMap && order.originLat && order.originLng && (
-        <View className="h-52 rounded-2xl overflow-hidden mb-4 border border-border">
+        <View className="h-80 rounded-2xl overflow-hidden mb-4 border border-border">
           <ShipmentMap
             origin={{ id: 'origin', formatted: order.originAddress, lat: parseFloat(order.originLat), lon: parseFloat(order.originLng), type: 'house' }}
             destination={{ id: 'dest', formatted: order.destAddress, lat: parseFloat(order.destLat), lon: parseFloat(order.destLng), type: 'house' }}
             routeInfo={null}
-            initialLocation={{ lat: parseFloat(order.destLat), lon: parseFloat(order.destLng) }}
+            initialLocation={driverLocation ? { lat: driverLocation.lat, lon: driverLocation.lng } : { lat: parseFloat(order.destLat), lon: parseFloat(order.destLng) }}
             driverLocation={driverLocation}
           />
         </View>

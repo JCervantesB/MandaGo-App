@@ -1,7 +1,7 @@
-import React, { useRef, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import MapView, { Marker, Polyline, MapPressEvent } from 'react-native-maps';
-import { MapPin, Flag, Bike } from 'lucide-react-native';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { Map, Marker, Camera, Layer, GeoJSONSource } from '@maplibre/maplibre-react-native';
+import { MapPin, Bike } from 'lucide-react-native';
 import { PlaceOption, RouteInfo, Coordinates } from '@/types/shipment-types';
 import { appColors } from '@/theme/theme';
 
@@ -16,159 +16,156 @@ interface ShipmentMapProps {
   driverLocation?: { lat: number; lng: number } | null;
 }
 
-// Mapa para mostrar origen, destino y ruta del envío
+function flattenRouteCoordinates(geometry: any): [number, number][] {
+  if (!geometry?.type || !geometry?.coordinates) return [];
+
+  if (geometry.type === 'LineString') {
+    return geometry.coordinates;
+  }
+
+  if (geometry.type === 'MultiLineString') {
+    return geometry.coordinates.flat();
+  }
+
+  return [];
+}
+
 export function ShipmentMap({
   origin,
   destination,
   routeInfo,
   initialLocation,
   onMapPress,
-  onOriginDragEnd,
-  onDestinationDragEnd,
   driverLocation = null,
 }: ShipmentMapProps) {
-  const mapRef = useRef<MapView>(null);
+  const [routeCoords, setRouteCoords] = useState<[number, number][] | null>(null);
+  const cameraRef = useRef<any>(null);
 
-  // Manejar presión en el mapa
-  const handlePress = useCallback((event: MapPressEvent) => {
-    const { coordinate } = event.nativeEvent;
-    onMapPress?.({ lat: coordinate.latitude, lon: coordinate.longitude });
+  const MarkerDrop = ({ color, label }: { color: string; label: string }) => (
+    <View className="items-center">
+      <Text className="text-xs font-bold text-white mb-0.5 px-1.5 py-0.5 rounded" style={{ backgroundColor: color }}>{label}</Text>
+      <View className="items-center justify-center w-9 h-9 rounded-full" style={{ backgroundColor: color }}>
+        <MapPin size={20} color="white" strokeWidth={2.5} />
+      </View>
+    </View>
+  );
+
+  useEffect(() => {
+    if (routeInfo?.geometry) {
+      const coords = flattenRouteCoordinates(routeInfo.geometry);
+      setRouteCoords(coords);
+    } else {
+      setRouteCoords(null);
+    }
+  }, [routeInfo?.geometry]);
+
+  useEffect(() => {
+    if (!cameraRef.current) return;
+    if (driverLocation) {
+      cameraRef.current.flyTo({
+        center: [driverLocation.lng, driverLocation.lat],
+        zoom: 13,
+        duration: 800,
+      });
+    } else if (initialLocation) {
+      cameraRef.current.flyTo({
+        center: [initialLocation.lon, initialLocation.lat],
+        zoom: 13,
+        duration: 800,
+      });
+    }
+  }, [driverLocation, initialLocation]);
+
+  const handleMapPress = useCallback((event: any) => {
+    const nativeEvent = event?.nativeEvent;
+    const lngLat = nativeEvent?.lngLat as [number, number] | undefined;
+    if (lngLat && Array.isArray(lngLat) && lngLat.length >= 2) {
+      onMapPress?.({ lat: lngLat[1], lon: lngLat[0] });
+    }
   }, [onMapPress]);
 
-  // Manejar arrastre del origen
-  const handleOriginDragEnd = useCallback((event: MapPressEvent) => {
-    const { coordinate } = event.nativeEvent;
-    onOriginDragEnd?.({ lat: coordinate.latitude, lon: coordinate.longitude });
-  }, [onOriginDragEnd]);
+  const getInitialCenter = (): [number, number] | undefined => {
+    if (driverLocation) return [driverLocation.lng, driverLocation.lat];
+    if (initialLocation) return [initialLocation.lon, initialLocation.lat];
+    if (origin) return [origin.lon, origin.lat];
+    return undefined;
+  };
 
-  // Manejar arrastre del destino
-  const handleDestinationDragEnd = useCallback((event: MapPressEvent) => {
-    const { coordinate } = event.nativeEvent;
-    onDestinationDragEnd?.({ lat: coordinate.latitude, lon: coordinate.longitude });
-  }, [onDestinationDragEnd]);
+  const hasLocation = initialLocation || origin || driverLocation;
 
-  // Manejar animación a la región del origen 
-  useEffect(() => {
-    if (origin && mapRef.current) {
-      mapRef.current.animateToRegion({
-        latitude: origin.lat,
-        longitude: origin.lon,
-        latitudeDelta: 0.03,
-        longitudeDelta: 0.03,
-      }, 500);
-    }
-  }, [origin]);
+  if (!hasLocation) {
+    return (
+      <View style={styles.container}>
+        <ActivityIndicator size="large" color={appColors.primary} />
+      </View>
+    );
+  }
 
-  // Manejar animación a la región del destino 
-  useEffect(() => {
-    if (origin && destination && mapRef.current) {
-      const midLat = (origin.lat + destination.lat) / 2;
-      const midLon = (origin.lon + destination.lon) / 2;
-
-      const latDiff = Math.abs(origin.lat - destination.lat) * 1.5;
-      const lonDiff = Math.abs(origin.lon - destination.lon) * 1.5;
-
-      mapRef.current.animateToRegion({
-        latitude: midLat,
-        longitude: midLon,
-        latitudeDelta: Math.max(latDiff, 0.03),
-        longitudeDelta: Math.max(lonDiff, 0.03),
-      }, 500);
-    }
-  }, [origin, destination]);
-
-  // Manejar animación a la región del conductor
-  useEffect(() => {
-    if (!mapRef.current || !driverLocation) return;
-
-    const markers: { lat: number; lng: number }[] = [{ lat: driverLocation.lat, lng: driverLocation.lng }];
-    if (destination) markers.push({ lat: destination.lat, lng: destination.lon });
-
-    const lats = markers.map(m => m.lat);
-    const lons = markers.map(m => m.lng);
-    const minLat = Math.min(...lats);
-    const maxLat = Math.max(...lats);
-    const minLon = Math.min(...lons);
-    const maxLon = Math.max(...lons);
-
-    mapRef.current.animateToRegion({
-      latitude: (minLat + maxLat) / 2,
-      longitude: (minLon + maxLon) / 2,
-      latitudeDelta: Math.abs(maxLat - minLat) * 1.5 + 0.02,
-      longitudeDelta: Math.abs(maxLon - minLon) * 1.5 + 0.02,
-    }, 500);
-  }, [driverLocation, destination]);
-
-  const routeCoordinates = routeInfo?.geometry?.map(c => ({
-    latitude: c.lat,
-    longitude: c.lon,
-  })) ?? [];
-
-  if (!initialLocation) return null;
+  const initialCenter = getInitialCenter();
 
   return (
     <View style={styles.container}>
-      <MapView
-        ref={mapRef}
-        style={styles.map}
-        initialRegion={{
-          latitude: initialLocation.lat,
-          longitude: initialLocation.lon,
-          latitudeDelta: 0.05,
-          longitudeDelta: 0.05,
-        }}
-        onPress={handlePress}
-        showsUserLocation
-        showsMyLocationButton={false}
-        showsCompass={false}
+      <Map
+        style={{ flex: 1 }}
+        mapStyle="https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"
+        onPress={handleMapPress}
       >
+        <Camera
+          ref={cameraRef}
+          initialViewState={initialCenter ? { center: initialCenter, zoom: 13 } : undefined}
+        />
+
         {origin && (
-          <Marker
-            coordinate={{ latitude: origin.lat, longitude: origin.lon }}
-            title="Origen"
-            pinColor={appColors.success}
-            draggable
-            onDragEnd={handleOriginDragEnd}
-          >
-            <View style={[styles.marker, styles.originMarker]}>
-              <MapPin size={18} color="white" />
-            </View>
+          <Marker id="origin" lngLat={[origin.lon, origin.lat]}>
+            <MarkerDrop color={appColors.success} label="Origen" />
           </Marker>
         )}
 
         {destination && (
-          <Marker
-            coordinate={{ latitude: destination.lat, longitude: destination.lon }}
-            title="Destino"
-            pinColor={appColors.mapDestination}
-            draggable
-            onDragEnd={handleDestinationDragEnd}
-          >
-            <View style={[styles.marker, styles.destinationMarker]}>
-              <Flag size={18} color="white" />
-            </View>
+          <Marker id="destination" lngLat={[destination.lon, destination.lat]}>
+            <MarkerDrop color={appColors.mapDestination} label="Destino" />
           </Marker>
         )}
 
         {driverLocation && (
-          <Marker
-            coordinate={{ latitude: driverLocation.lat, longitude: driverLocation.lng }}
-            title="Repartidor"
-          >
-            <View style={[styles.marker, styles.driverMarker]}>
-              <Bike size={18} color="white" />
+          <Marker id="driver" lngLat={[driverLocation.lng, driverLocation.lat]}>
+            <View className="items-center">
+              <View className="items-center justify-center w-10 h-10 rounded-full" style={{ backgroundColor: '#3B82F6' }}>
+                <Bike size={22} color="white" strokeWidth={2.5} />
+              </View>
             </View>
           </Marker>
         )}
 
-        {routeCoordinates.length > 0 && (
-          <Polyline
-            coordinates={routeCoordinates}
-            strokeColor={appColors.primary}
-            strokeWidth={4}
-          />
+        {routeCoords && routeCoords.length > 0 && (
+          <GeoJSONSource
+            id="routeSource"
+            data={{
+              type: 'Feature',
+              properties: {},
+              geometry: {
+                type: 'LineString',
+                coordinates: routeCoords,
+              },
+            }}
+          >
+            <Layer
+              id="routeLine"
+              type="line"
+              source="routeSource"
+              paint={{
+                "line-color": appColors.primary,
+                "line-width": 4,
+                "line-opacity": 0.8,
+              }}
+              layout={{
+                "line-join": "round",
+                "line-cap": "round",
+              }}
+            />
+          </GeoJSONSource>
         )}
-      </MapView>
+      </Map>
 
       {routeInfo && (
         <View style={styles.routeInfo}>
@@ -177,10 +174,6 @@ export function ShipmentMap({
           </Text>
         </View>
       )}
-
-      <View style={styles.hintArea}>
-        <Text style={styles.hintText}>Toca o arrastra los marcadores para seleccionar</Text>
-      </View>
     </View>
   );
 }
@@ -191,35 +184,9 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     overflow: 'hidden',
   },
-  map: {
-    flex: 1,
-  },
-  marker: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  originMarker: {
-    backgroundColor: appColors.success,
-  },
-  destinationMarker: {
-    backgroundColor: '#EF4444',
-  },
-  driverMarker: {
-    backgroundColor: '#3B82F6',
-  },
   routeInfo: {
     position: 'absolute',
-    bottom: 60,
+    bottom: 16,
     left: 16,
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 12,
@@ -235,18 +202,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: appColors.text,
-  },
-  hintArea: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'rgba(255,255,255,0.9)',
-    paddingVertical: 10,
-    alignItems: 'center',
-  },
-  hintText: {
-    fontSize: 12,
-    color: '#64748B',
   },
 });

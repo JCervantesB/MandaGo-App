@@ -1,0 +1,421 @@
+import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { View, Text, StyleSheet, Platform, ActivityIndicator, Pressable } from 'react-native';
+import { WebView } from 'react-native-webview';
+import { MapPin, Flag, ChevronDown, ChevronUp } from 'lucide-react-native';
+import { appColors } from '@/theme/theme';
+import type { PlaceOption, Coordinates } from '@/types/shipment-types';
+
+interface RouteData {
+  geometry: Coordinates[];
+  distance: number;
+  duration: number;
+}
+
+interface CustomerShipmentMapProps {
+  origin: PlaceOption | null;
+  destination: PlaceOption | null;
+  routeInfo?: { distance: number; duration: number; geometry?: Coordinates[] } | null;
+  initialLocation?: Coordinates | null;
+  onMapPress?: (coords: Coordinates) => void;
+  onOriginDragEnd?: (coords: Coordinates) => void;
+  onDestinationDragEnd?: (coords: Coordinates) => void;
+  draggable?: boolean;
+  showLegend?: boolean;
+  height?: number | string;
+}
+
+function extractCoordinatesFromGeometry(geometry: unknown): Coordinates[] {
+  if (!Array.isArray(geometry) || geometry.length === 0) return [];
+  const rawCoords = geometry as unknown[];
+  const firstItem = rawCoords[0];
+
+  if (typeof firstItem === 'number') {
+    return Array.from({ length: Math.floor(rawCoords.length / 2) }, (_, i) => ({
+      lat: rawCoords[i * 2 + 1] as number,
+      lon: rawCoords[i * 2] as number,
+    }));
+  }
+
+  if (Array.isArray(firstItem) && firstItem.length > 0) {
+    if (typeof firstItem[0] === 'number') {
+      return (geometry as number[][]).map(coord => ({ lat: coord[1], lon: coord[0] }));
+    }
+    if (Array.isArray(firstItem[0]) && typeof firstItem[0][0] === 'number') {
+      return (geometry as number[][][])[0].map(coord => ({ lat: coord[1], lon: coord[0] }));
+    }
+    if (Array.isArray(firstItem[0]) && Array.isArray(firstItem[0][0]) && typeof firstItem[0][0][0] === 'number') {
+      const lineStrings = geometry as number[][][][];
+      const allCoords: Coordinates[] = [];
+      for (const lineString of lineStrings) {
+        for (const coord of lineString[0]) {
+          allCoords.push({ lat: coord[1], lon: coord[0] });
+        }
+      }
+      return allCoords;
+    }
+  }
+
+  return [];
+}
+
+function buildOSMMapHTML(
+  centerLat: number,
+  centerLon: number,
+  markerData: Array<{ lat: number; lon: number; title: string; color: string; index: number; markerType: string }>,
+  routeCoords: Array<{ lat: number; lon: number }>,
+): string {
+  const markerColors: Record<string, string> = {
+    origin: '#22C55E',
+    destination: '#EF4444',
+    driver: '#3B82F6',
+  };
+
+  const markerJson = JSON.stringify(markerData);
+  const routeJson = JSON.stringify(routeCoords);
+
+const svgIcons: Record<string, string> = {
+    origin: `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M8 3H3v5"/><path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 3l1.414 1.414a4 4 0 0 0 1.172 2.872V22"/><path d="M3 3l8.828 8.828a4 4 0 0 1-1.414 1.414L3 3"/></svg>`,
+    destination: `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#EF4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/></svg>`,
+    driver: `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="18.5" r="3"/><circle cx="19" cy="18.5" r="3"/><path d="M5 15.5h14l-1.5-7H6.5z"/><path d="M5 15.5l-2-6h2.5"/><path d="M21.5 9.5h-3l-1-4h-8l-1 4H3"/></svg>`,
+  };
+
+  const iconJson = JSON.stringify(svgIcons);
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@8.2.0/ol.css">
+  <script src="https://cdn.jsdelivr.net/npm/ol@8.2.0/dist/ol.js"></script>
+  <style>
+    body { margin: 0; padding: 0; overflow: hidden; }
+    #map { width: 100%; height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script>
+    window.onerror = function(msg, url, line, col, error) {
+      console.log('[WEBVIEW] JS ERROR:', msg, 'line:', line);
+      return true;
+    };
+
+    const markerData = ${markerJson};
+    var routeCoords = [];
+    const svgIcons = ${iconJson};
+
+    console.log('[WEBVIEW] HTML loaded, markers:', markerData.length);
+
+    const vectorSource = new ol.source.Vector({ features: [] });
+
+    const map = new ol.Map({
+      target: 'map',
+      layers: [
+        new ol.layer.Tile({ source: new ol.source.OSM() }),
+        new ol.layer.Vector({ source: vectorSource })
+      ],
+      view: new ol.View({
+        center: ol.proj.fromLonLat([${centerLon}, ${centerLat}]),
+        zoom: 14
+      })
+    });
+
+    function drawRoute(coords) {
+      console.log('[WEBVIEW] drawRoute called with', coords.length, 'points');
+      vectorSource.getFeatures().forEach(function(f) {
+        if (f.get('isRoute')) vectorSource.removeFeature(f);
+      });
+      if (coords.length < 2) return;
+      var routeLineCoords = coords.map(function(c) { return ol.proj.fromLonLat([c.lon, c.lat]); });
+      var routeFeature = new ol.Feature({
+        geometry: new ol.LineString(routeLineCoords)
+      });
+      routeFeature.set('isRoute', true);
+      routeFeature.setStyle(new ol.style.Style({
+        stroke: new ol.style.Stroke({ color: '#2563EB', width: 4 })
+      }));
+      vectorSource.addFeature(routeFeature);
+      var extent = routeFeature.getGeometry().getExtent();
+      map.getView().fit(extent, { padding: [50, 50, 50, 50], maxZoom: 15 });
+      console.log('[WEBVIEW] Route drawn');
+    }
+
+    function drawMarkers() {
+      markerData.forEach(function(m) {
+        var iconFeature = new ol.Feature({
+          geometry: new ol.geom.Point(ol.proj.fromLonLat([m.lon, m.lat])),
+          title: m.title,
+          color: m.color,
+          markerType: m.markerType,
+          index: m.index
+        });
+        var markerType = m.markerType || 'origin';
+        var svgStr = svgIcons[markerType] || svgIcons.origin;
+        var svgBlob = new Blob([svgStr], { type: 'image/svg+xml' });
+        var svgUrl = URL.createObjectURL(svgBlob);
+        iconFeature.setStyle(new ol.style.Style({
+          image: new ol.style.Icon({
+            src: svgUrl,
+            scale: 1,
+            anchor: [0.5, 1],
+          })
+        }));
+        vectorSource.addFeature(iconFeature);
+      });
+      console.log('[WEBVIEW] Markers drawn:', markerData.length);
+    }
+
+    drawMarkers();
+
+    window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'map_ready' }));
+  </script>
+</body>
+</html>`;
+}
+
+function OSMMapView({
+  origin,
+  destination,
+  routeInfo,
+  initialLocation,
+  onMapPress,
+  onOriginDragEnd,
+  onDestinationDragEnd,
+  showLegend,
+  height,
+}: {
+  origin: PlaceOption | null;
+  destination: PlaceOption | null;
+  routeInfo: { geometry: Coordinates[]; distance: number; duration: number } | null;
+  initialLocation: Coordinates | null;
+  onMapPress?: (coords: Coordinates) => void;
+  onOriginDragEnd?: (coords: Coordinates) => void;
+  onDestinationDragEnd?: (coords: Coordinates) => void;
+  showLegend?: boolean;
+  height: number | string;
+}) {
+  const webViewRef = useRef<WebView>(null);
+
+  const markerData: Array<{ lat: number; lon: number; title: string; color: string; index: number; markerType: string }> = [];
+
+  if (origin) {
+    markerData.push({ lat: origin.lat, lon: origin.lon, title: 'Origen', color: '#22C55E', index: 0, markerType: 'origin' });
+  }
+  if (destination) {
+    markerData.push({ lat: destination.lat, lon: destination.lon, title: 'Destino', color: '#EF4444', index: 1, markerType: 'destination' });
+  }
+
+  const routeCoords = routeInfo ? ((routeInfo as any).geometry ?? []) : [];
+
+  const routeCoordsJson = JSON.stringify(routeCoords);
+
+  const centerLat = initialLocation?.lat ?? (origin?.lat ?? 19.4326);
+  const centerLon = initialLocation?.lon ?? (origin?.lon ?? -99.1332);
+
+  const htmlContent = buildOSMMapHTML(centerLat, centerLon, markerData, routeCoords);
+
+  const handleMessage = useCallback((event: { nativeEvent: { data: string } }) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+
+      switch (data.type) {
+        case 'map_ready':
+          console.log('[MAP] WebView ready, injecting route data');
+          if (routeCoords.length > 0 && webViewRef.current) {
+            webViewRef.current.injectJavaScript(`if (typeof drawRoute === 'function') { drawRoute(${routeCoordsJson}); console.log('[INJECT] Route drawn'); } true;`);
+          }
+          break;
+        case 'map_tap':
+          onMapPress?.({ lat: data.lat, lon: data.lon });
+          break;
+        case 'marker_drag_end':
+          if (data.title === 'Origen') {
+            onOriginDragEnd?.({ lat: data.lat, lon: data.lon });
+          } else if (data.title === 'Destino') {
+            onDestinationDragEnd?.({ lat: data.lat, lon: data.lon });
+          }
+          break;
+      }
+    } catch {
+      // Ignore parse errors
+    }
+  }, [onMapPress, onOriginDragEnd, onDestinationDragEnd]);
+
+  if (!initialLocation && !origin) {
+    return (
+      <View style={[styles.loadingContainer, { height: height as number }]}>
+        <Text style={styles.loadingText}>Cargando mapa...</Text>
+      </View>
+    );
+  }
+
+  console.log('[OSMMapView] routeCoords:', routeCoords.length);
+
+  return (
+    <View style={[styles.container, { height: height as number }]}>
+      <WebView
+        ref={webViewRef}
+        source={{ html: htmlContent }}
+        style={styles.map}
+        scrollEnabled={false}
+        onMessage={handleMessage}
+        onError={(e) => console.log('[WEBVIEW RN ERROR]', e.nativeEvent.description)}
+        javaScriptEnabled
+        domStorageEnabled
+        originWhitelist={['*']}
+        mixedContentMode="always"
+        allowsInlineMediaPlayback
+        mediaPlaybackRequiresUserAction={false}
+        key={'osm-map-' + routeCoords.length}
+      />
+
+      {showLegend && routeInfo && (
+        <View style={styles.legendContainer}>
+          <View style={styles.legendContent}>
+            <Text style={styles.legendTitle}>
+              {(routeInfo.distance / 1000).toFixed(1)} km • {Math.round(routeInfo.duration / 60)} min
+            </Text>
+          </View>
+        </View>
+      )}
+
+      {!origin || !destination ? (
+        <View style={styles.hintContainer}>
+          <Text style={styles.hintText}>Toca el mapa para seleccionar punto</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+export function CustomerShipmentMap({
+  origin,
+  destination,
+  routeInfo: externalRouteInfo,
+  initialLocation,
+  onMapPress,
+  onOriginDragEnd,
+  onDestinationDragEnd,
+  draggable = true,
+  showLegend = false,
+  height = '100%',
+}: CustomerShipmentMapProps) {
+  const [internalRoute, setInternalRoute] = useState<RouteData | null>(null);
+  const [isLoadingRoute, setIsLoadingRoute] = useState(false);
+  const [legendCollapsed, setLegendCollapsed] = useState(false);
+
+  const calculateRoute = useCallback(async () => {
+    if (!origin || !destination) return;
+
+    setIsLoadingRoute(true);
+
+    try {
+      const API_KEY = process.env.EXPO_PUBLIC_GEOAPIFY_API_KEY;
+      if (!API_KEY) {
+        console.warn('GEOAPIFY_API_KEY not configured');
+        return;
+      }
+
+      const url = `https://api.geoapify.com/v1/routing?waypoints=lonlat:${origin.lon},${origin.lat}|lonlat:${destination.lon},${destination.lat}&mode=drive&details=instruction_details&apiKey=${API_KEY}`;
+
+      const response = await fetch(url);
+      const data = await response.json();
+
+      console.log('Route response:', JSON.stringify(data, null, 2));
+
+      if (data.features && data.features.length > 0) {
+        const coords = extractCoordinatesFromGeometry(data.features[0].geometry.coordinates);
+        const routeData = {
+          geometry: coords,
+          distance: data.features[0].properties.distance,
+          duration: data.features[0].properties.duration,
+        };
+        console.log('[ calculateRoute ] *** BEFORE setInternalRoute ***');
+        console.log('[ calculateRoute ] coords.length:', coords.length);
+        console.log('[ calculateRoute ] routeData.geometry?.length:', routeData.geometry?.length);
+        console.log('[ calculateRoute ] routeData:', JSON.stringify(routeData));
+        setInternalRoute(routeData);
+        console.log('[ calculateRoute ] *** AFTER setInternalRoute ***');
+        console.log('[ calculateRoute ] internalRoute just set, geometry has ' + routeData.geometry.length + ' points');
+        console.log('[ calculateRoute ] routeData.geometry[0]:', JSON.stringify(routeData.geometry[0]));
+      }
+    } catch (error) {
+      console.error('Route calculation error:', error);
+    } finally {
+      setIsLoadingRoute(false);
+    }
+  }, [origin, destination]);
+
+  useEffect(() => {
+    if (origin && destination) {
+      calculateRoute();
+    } else {
+      setInternalRoute(null);
+    }
+  }, [origin, destination, calculateRoute]);
+
+  const routeInfo = (externalRouteInfo && (externalRouteInfo as any).geometry) ? externalRouteInfo : (internalRoute ?? externalRouteInfo);
+
+  const rawGeom = routeInfo && (routeInfo as any).geometry;
+
+  let mapRouteInfo: { geometry: Coordinates[]; distance: number; duration: number } | null = null;
+
+  if (rawGeom && Array.isArray(rawGeom) && rawGeom.length > 0) {
+    mapRouteInfo = routeInfo as { geometry: Coordinates[]; distance: number; duration: number };
+  } else if (internalRoute && (internalRoute as any).geometry && (internalRoute as any).geometry.length > 0) {
+    mapRouteInfo = internalRoute as { geometry: Coordinates[]; distance: number; duration: number };
+    console.log('[DEBUG] Using internalRoute for mapRouteInfo, geometry length:', (internalRoute as any).geometry.length);
+  }
+
+  return (
+    <OSMMapView
+      origin={origin}
+      destination={destination}
+      routeInfo={mapRouteInfo}
+      initialLocation={initialLocation}
+      onMapPress={onMapPress}
+      onOriginDragEnd={onOriginDragEnd}
+      onDestinationDragEnd={onDestinationDragEnd}
+      showLegend={showLegend}
+      height={height}
+    />
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, overflow: 'hidden' },
+  map: { flex: 1 },
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: '#F1F5F9',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: { marginTop: 12, fontSize: 14, color: appColors.textMuted },
+  legendContainer: {
+    position: 'absolute',
+    top: 50,
+    right: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.16,
+    shadowRadius: 8,
+    elevation: 8,
+    minWidth: 200,
+    overflow: 'hidden',
+  },
+  legendContent: { paddingHorizontal: 14, paddingVertical: 10 },
+  legendTitle: { fontSize: 12, fontWeight: '700', color: appColors.text },
+  hintContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  hintText: { fontSize: 12, color: '#64748B' },
+});

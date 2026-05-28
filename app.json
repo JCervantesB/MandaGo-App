@@ -20,9 +20,6 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true,
-      "usesCleartextTraffic": true,
-      "predictiveBackGestureEnabled": false,
       "package": "com.imjcervantes.client"
     },
     "web": {
@@ -33,6 +30,10 @@
         "projectId": "94dd2b29-dab3-4343-a211-3ba2a35f9171"
       }
     },
-    "owner": "imjcervantes"
+    "owner": "imjcervantes",
+    "plugins": [
+      "expo-secure-store",
+      "@maplibre/maplibre-react-native"
+    ]
   }
 }
