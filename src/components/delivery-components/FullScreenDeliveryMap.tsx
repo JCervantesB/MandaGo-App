@@ -5,7 +5,6 @@ import { MapPin, ChevronDown, ChevronUp, Bike } from 'lucide-react-native';
 import { useCurrentLocation, useLocationWatcher } from '@/hooks/use-current-location';
 import { getRoute } from '@/services/geoapify-service';
 import { appColors } from '@/theme/theme';
-import type { Coordinates } from '@/types/shipment-types';
 
 export type RouteType = 'driver-to-pickup' | 'pickup-to-delivery' | 'both' | 'none';
 
@@ -21,16 +20,12 @@ interface FullScreenDeliveryMapProps {
   onDriverLocationUpdate?: (location: { lat: number; lon: number }) => void;
 }
 
-interface RouteData {
-  geometry: any;
-  distance: number;
-}
-
 const ROUTE_COLORS = {
   toPickup: '#3B82F6',
   toDelivery: '#22C55E',
 };
 
+// Aplanar las coordenadas de la ruta en una sola matriz
 function flattenRouteCoordinates(geometry: any): [number, number][] {
   if (!geometry?.type || !geometry?.coordinates) return [];
 
@@ -45,7 +40,8 @@ function flattenRouteCoordinates(geometry: any): [number, number][] {
   return [];
 }
 
-export function FullScreenDeliveryMap({
+// Componente de mapa del repartidor
+export default function FullScreenDeliveryMap({
   originLat,
   originLng,
   destLat,
@@ -64,6 +60,7 @@ export function FullScreenDeliveryMap({
   const [isLoadingRoutes, setIsLoadingRoutes] = useState(false);
   const [legendCollapsed, setLegendCollapsed] = useState(false);
 
+  // Combinar la ubicación externa con la ubicación interna
   const driverLocation = externalDriverLocation ?? internalDriverLocation;
 
   const originLatNum = parseFloat(originLat);
@@ -76,6 +73,7 @@ export function FullScreenDeliveryMap({
 
   const isDelivered = routeType === 'none';
 
+  // Manejar la actualización de la ubicación del conductor
   const handleLocationUpdate = useCallback(
     (location: { latitude: number; longitude: number }) => {
       const loc = { lat: location.latitude, lon: location.longitude };
@@ -85,8 +83,10 @@ export function FullScreenDeliveryMap({
     [onDriverLocationUpdate]
   );
 
+  // Utilizar el watcher de ubicación para actualizar la ubicación del conductor
   useLocationWatcher(handleLocationUpdate, 10000);
 
+  // Obtener la ubicación inicial del mapa basada en la ubicación del conductor, la ubicación inicial o el destino
   useEffect(() => {
     if (!hasValidCoords) return;
     getCurrentLocation().then((location) => {
@@ -98,6 +98,7 @@ export function FullScreenDeliveryMap({
     });
   }, [hasValidCoords, getCurrentLocation, onDriverLocationUpdate]);
 
+  // Calcular las rutas de recogida y entrega
   const calculateRoutes = useCallback(async () => {
     if (!hasValidCoords) return;
     if (isDelivered) return;
@@ -123,6 +124,7 @@ export function FullScreenDeliveryMap({
       }
     }
 
+    // Calcular la ruta de entrega
     if (routeType !== 'driver-to-pickup') {
       const startLat = routeType === 'pickup-to-delivery' && driverLocation ? driverLocation.lat : originLatNum;
       const startLon = routeType === 'pickup-to-delivery' && driverLocation ? driverLocation.lon : originLngNum;
@@ -151,7 +153,8 @@ export function FullScreenDeliveryMap({
     }
   }, [hasValidCoords, calculateRoutes]);
 
-  useEffect(() => {
+  // Mover la cámara al conductor si está disponible
+   useEffect(() => {
     if (cameraRef.current && driverLocation) {
       cameraRef.current.flyTo({
         center: [driverLocation.lon, driverLocation.lat],
@@ -178,11 +181,17 @@ export function FullScreenDeliveryMap({
     </View>
   );
 
-  const centerLat = driverLocation?.lat ?? originLatNum;
-  const centerLon = driverLocation?.lon ?? originLngNum;
+  const centerLat = driverLocation?.lat ?? (hasValidCoords ? originLatNum : 0);
+  const centerLon = driverLocation?.lon ?? (hasValidCoords ? originLngNum : 0);
 
-  const routeToPickupDistance = 0;
-  const routeToDeliveryDistance = 0;
+  if (!hasValidCoords) {
+    return (
+      <View style={styles.errorContainer}>
+        <ActivityIndicator size="large" color={appColors.primary} />
+        <Text style={styles.errorText}>Cargando coordenadas...</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>

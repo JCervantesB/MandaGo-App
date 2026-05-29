@@ -6,6 +6,7 @@ import type { DeliveryOrder } from '@/types/delivery-order';
 
 interface UseActiveOrderReturn {
   activeOrder: DeliveryOrder | null;
+  activeOrders: DeliveryOrder[];
   isLoading: boolean;
   refetch: () => Promise<void>;
   updateStatus: (status: string) => Promise<boolean>;
@@ -15,6 +16,7 @@ interface UseActiveOrderReturn {
 // Hook para manejar la orden activa del repartidor (flujo completo de entrega)
 export function useActiveOrder(): UseActiveOrderReturn {
   const [activeOrder, setActiveOrder] = useState<DeliveryOrder | null>(null);
+  const [activeOrders, setActiveOrders] = useState<DeliveryOrder[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const { setActiveOrderIdForTracking } = useAppState();
 
@@ -35,10 +37,13 @@ export function useActiveOrder(): UseActiveOrderReturn {
         throw new Error(`Error al cargar ordenes: ${response.status} - ${text}`);
       }
       const orders = await response.json() as DeliveryOrder[];
-      setActiveOrder(orders.length > 0 ? orders[0] : null);
+      setActiveOrders(orders);
+      const primaryOrder = orders.length > 0 ? orders.find(isInDeliveryPhase) ?? orders[0] : null;
+      setActiveOrder(primaryOrder);
     } catch (err) {
       console.error('Error fetching active order:', err);
       setActiveOrder(null);
+      setActiveOrders([]);
     } finally {
       setIsLoading(false);
     }
@@ -134,6 +139,7 @@ export function useActiveOrder(): UseActiveOrderReturn {
 
   return {
     activeOrder,
+    activeOrders,
     isLoading,
     refetch: fetchActiveOrder,
     updateStatus,

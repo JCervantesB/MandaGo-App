@@ -295,7 +295,7 @@ export function DeliveryBottomSheet({ order, onAction, onClose, onDeliveryConfir
             )}
           </Pressable>
 
-          {(order.status === 'asignado' || order.status === 'aceptado') && (
+          {(order.status === 'asignado' || order.status === 'aceptado' || order.status === 'en_recorrido') && (
             <Pressable
               onPress={() => onAction('abandon')}
               className="h-12 rounded-2xl items-center justify-center mt-3 border-2 border-red-300"

@@ -16,6 +16,7 @@ interface ShipmentMapProps {
   driverLocation?: { lat: number; lng: number } | null;
 }
 
+// Aplanar las coordenadas de la ruta en una sola matriz
 function flattenRouteCoordinates(geometry: any): [number, number][] {
   if (!geometry?.type || !geometry?.coordinates) return [];
 
@@ -30,7 +31,8 @@ function flattenRouteCoordinates(geometry: any): [number, number][] {
   return [];
 }
 
-export function ShipmentMap({
+// Componente de mapa de envío
+export default function ShipmentMap({
   origin,
   destination,
   routeInfo,
@@ -50,6 +52,7 @@ export function ShipmentMap({
     </View>
   );
 
+  // Actualizar las coordenadas de la ruta cuando la información de la ruta cambie
   useEffect(() => {
     if (routeInfo?.geometry) {
       const coords = flattenRouteCoordinates(routeInfo.geometry);
@@ -59,6 +62,7 @@ export function ShipmentMap({
     }
   }, [routeInfo?.geometry]);
 
+  // Actualizar la cámara del mapa cuando la ubicación del conductor o la ubicación inicial cambie
   useEffect(() => {
     if (!cameraRef.current) return;
     if (driverLocation) {
@@ -76,6 +80,7 @@ export function ShipmentMap({
     }
   }, [driverLocation, initialLocation]);
 
+  // Manejar el evento de clic en el mapa
   const handleMapPress = useCallback((event: any) => {
     const nativeEvent = event?.nativeEvent;
     const lngLat = nativeEvent?.lngLat as [number, number] | undefined;
@@ -84,6 +89,7 @@ export function ShipmentMap({
     }
   }, [onMapPress]);
 
+  // Obtener la ubicación inicial del mapa basada en la ubicación del conductor, la ubicación inicial o el origen
   const getInitialCenter = (): [number, number] | undefined => {
     if (driverLocation) return [driverLocation.lng, driverLocation.lat];
     if (initialLocation) return [initialLocation.lon, initialLocation.lat];

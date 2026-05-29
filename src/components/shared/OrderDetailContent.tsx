@@ -1,7 +1,7 @@
 import { Image } from 'react-native';
 import { MapPin, Flag, Package, Clock, Phone, User, Camera } from 'lucide-react-native';
 import { ScrollView, Text, View } from 'react-native';
-import { ShipmentMap } from '@/components/shipment/ShipmentMap';
+import ShipmentMap from '@/components/shipment/ShipmentMap';
 import { appColors } from '@/theme/theme';
 import { STATUS_CONFIG } from '@/types/delivery-order';
 import { formatDateFull } from '@/utils/date-formatters';

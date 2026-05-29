@@ -45,6 +45,8 @@ export function useLocationWatcher(
   intervalMs: number = 10000
 ) {
   const watchRef = useRef<Location.LocationSubscription | null>(null);
+  const callbackRef = useRef(onLocationUpdate);
+  callbackRef.current = onLocationUpdate;
 
   // Función para escuchar cambios de ubicación en tiempo real
   // Utiliza la API de Expo para escuchar cambios de ubicación
@@ -64,7 +66,7 @@ export function useLocationWatcher(
         },
         (location) => {
           if (!isMounted) return;
-          onLocationUpdate({
+          callbackRef.current({
             latitude: location.coords.latitude,
             longitude: location.coords.longitude,
           });
@@ -78,5 +80,5 @@ export function useLocationWatcher(
       isMounted = false;
       watchRef.current?.remove();
     };
-  }, [intervalMs, onLocationUpdate]);
+  }, [intervalMs]);
 }

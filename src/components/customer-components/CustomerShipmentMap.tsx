@@ -21,6 +21,7 @@ interface CustomerShipmentMapProps {
   height?: number | string;
 }
 
+// Aplanar las coordenadas de la ruta en una sola matriz
 function flattenRouteCoordinates(geometry: any): [number, number][] {
   if (!geometry?.type || !geometry?.coordinates) return [];
 
@@ -35,6 +36,7 @@ function flattenRouteCoordinates(geometry: any): [number, number][] {
   return [];
 }
 
+// Componente de mapa del cliente
 export function CustomerShipmentMap({
   origin,
   destination,
@@ -42,7 +44,6 @@ export function CustomerShipmentMap({
   initialLocation,
   onMapPress,
   showLegend = false,
-  height = '100%',
 }: CustomerShipmentMapProps) {
   const [internalRoute, setInternalRoute] = useState<RouteData | null>(null);
   const [legendCollapsed, setLegendCollapsed] = useState(false);
@@ -50,6 +51,7 @@ export function CustomerShipmentMap({
   const cameraRef = useRef<any>(null);
   const hasCentered = useRef(false);
 
+  // Componente de marcador de entrega
   const MarkerDrop = ({ color, label }: { color: string; label: string }) => (
     <View className="items-center">
       <Text className="text-xs font-bold text-white mb-0.5 px-1.5 py-0.5 rounded" style={{ backgroundColor: color }}>{label}</Text>
@@ -59,6 +61,7 @@ export function CustomerShipmentMap({
     </View>
   );
 
+  // Calcular la ruta de entrega
   const calculateRoute = useCallback(async () => {
     if (!origin || !destination) return;
 
@@ -69,6 +72,7 @@ export function CustomerShipmentMap({
         return;
       }
 
+      // Calcular la ruta de entrega utilizando Geoapify
       const url = `https://api.geoapify.com/v1/routing?waypoints=lonlat:${origin.lon},${origin.lat}|lonlat:${destination.lon},${destination.lat}&mode=drive&details=instruction_details&apiKey=${API_KEY}`;
 
       const response = await fetch(url);
@@ -91,6 +95,7 @@ export function CustomerShipmentMap({
     }
   }, [origin, destination]);
 
+  // Calcular la ruta de entrega cuando el origen y el destino cambian
   useEffect(() => {
     if (origin && destination) {
       calculateRoute();
@@ -100,6 +105,7 @@ export function CustomerShipmentMap({
     }
   }, [origin, destination, calculateRoute]);
 
+  // Centrar el mapa en la ubicación inicial cuando se carga el componente
   useEffect(() => {
     if (cameraRef.current && initialLocation && !hasCentered.current) {
       cameraRef.current.flyTo({
@@ -111,10 +117,12 @@ export function CustomerShipmentMap({
     }
   }, [initialLocation]);
 
+  // Obtener la información de la ruta de entrega utilizando la información externa si está disponible
   const routeInfo = externalRouteInfo ?? internalRoute;
   const routeDistance = routeInfo?.distance ?? 0;
   const routeDuration = routeInfo?.duration ?? 0;
 
+  // Manejar el evento de clic en el mapa
   const handleMapPress = useCallback((event: any) => {
     console.log('[Map] onPress fired');
     const nativeEvent = event?.nativeEvent;
@@ -136,6 +144,8 @@ export function CustomerShipmentMap({
     );
   }
 
+  // Render del mapa con CartoDB Voyager GL Style
+  // https://docs.carto.com/carto-for-developers/carto-for-react/guides/basemaps
   return (
     <View className="flex-1 overflow-hidden">
       <Map

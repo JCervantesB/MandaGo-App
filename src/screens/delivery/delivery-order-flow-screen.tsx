@@ -2,12 +2,12 @@ import React, { useEffect, useState } from 'react';
 import { View, StyleSheet, Alert, Pressable, Text } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, MessageCircle } from 'lucide-react-native';
-import { FullScreenDeliveryMap, RouteType } from '@/components/delivery-components/FullScreenDeliveryMap';
+import FullScreenDeliveryMap, { RouteType } from '@/components/delivery-components/FullScreenDeliveryMap';
 import { DeliveryBottomSheet } from '@/components/delivery-components/DeliveryBottomSheet';
 import { useActiveOrder } from '@/hooks/use-delivery-order-flow';
 import { appColors } from '@/theme/theme';
 import { API_BASE_URL } from '@/config/api';
-import type { DeliveryOrder } from '@/types/delivery-order';
+import type { DeliveryOrder, OrderStatus } from '@/types/delivery-order';
 import { socketClient } from '@/services/socket-client';
 
 interface DeliveryOrderFlowScreenProps {
@@ -33,33 +33,64 @@ function getRouteType(status: string): RouteType {
 }
 
 export function DeliveryOrderFlowScreen({ route, navigation }: DeliveryOrderFlowScreenProps) {
-  const { activeOrder, isLoading, refetch, updateStatus, claimOrder } = useActiveOrder();
+  const { activeOrders, isLoading, refetch, updateStatus } = useActiveOrder();
   const [order, setOrder] = useState<DeliveryOrder | null>(null);
 
   useEffect(() => {
+    const orderId = route?.params?.orderId;
+    if (!orderId) return;
+
+    const orderFromActiveList = activeOrders.find((o) => o.id === orderId);
+    if (orderFromActiveList) {
+      setOrder(orderFromActiveList);
+      return;
+    }
+
     const fetchSpecificOrder = async () => {
-      const [availableRes, assignedRes, deliveredRes] = await Promise.all([
-        fetch(`${process.env.EXPO_PUBLIC_API_URL}/driver/orders/available`, { credentials: 'include' }),
-        fetch(`${process.env.EXPO_PUBLIC_API_URL}/driver/orders/assigned`, { credentials: 'include' }),
-        fetch(`${process.env.EXPO_PUBLIC_API_URL}/driver/orders/delivered`, { credentials: 'include' }),
-      ]);
-      const available = await availableRes.json() as DeliveryOrder[];
-      const assigned = await assignedRes.json() as DeliveryOrder[];
-      const delivered = await deliveredRes.json() as DeliveryOrder[];
-      const found = available.find((o) => o.id === route.params.orderId)
-        ?? assigned.find((o) => o.id === route.params.orderId)
-        ?? delivered.find((o) => o.id === route.params.orderId);
-      setOrder(found ?? null);
+      try {
+        const response = await fetch(`${API_BASE_URL}/driver/orders/${orderId}`, {
+          credentials: 'include',
+        });
+        if (response.ok) {
+          const found = await response.json() as DeliveryOrder;
+          setOrder(found);
+        }
+      } catch (err) {
+        console.error('Error fetching order:', err);
+      }
     };
 
-    if (route?.params?.orderId && activeOrder && activeOrder.id !== route.params.orderId) {
-      fetchSpecificOrder();
-    } else if (route?.params?.orderId && !activeOrder) {
-      fetchSpecificOrder();
-    } else {
-      setOrder(activeOrder);
-    }
-  }, [activeOrder, route?.params?.orderId]);
+    fetchSpecificOrder();
+  }, [route?.params?.orderId, activeOrders]);
+
+  useEffect(() => {
+    const socket = socketClient.connect();
+    if (!socket) return;
+
+    socketClient.joinDriversRoom();
+
+    const handleOrderUpdate = (data: { orderId: number; status: string }) => {
+      console.log('[DeliveryOrderFlow] order:updated received:', data);
+      if (order && data.orderId === order.id) {
+        setOrder((prev) => prev ? { ...prev, status: data.status as OrderStatus } : null);
+      }
+      refetch();
+    };
+
+    const handleDriverLocationUpdate = (data: { orderId: number; lat: number; lon: number }) => {
+      if (order && data.orderId === order.id) {
+        console.log('[DeliveryOrderFlow] driver location update for order:', data.orderId);
+      }
+    };
+
+    const unsubOrder = socketClient.on('order:updated', handleOrderUpdate);
+    const unsubLocation = socketClient.on('driver:location_updated', handleDriverLocationUpdate);
+
+    return () => {
+      unsubOrder();
+      unsubLocation();
+    };
+  }, [order, refetch]);
 
   const handleClaimOrder = async (orderId: number): Promise<boolean> => {
     try {

@@ -16,13 +16,13 @@ interface DeliveryHomeScreenProps {
 }
 
 const PRIORITY_CONFIG = {
-  normal: { label: 'Normal', color: '#2563EB', bgColor: '#DBEAFE' },
-  express: { label: 'Express', color: '#D97706', bgColor: '#FEF3C7' },
-  urgente: { label: 'Urgente', color: '#DC2626', bgColor: '#FEE2E2' },
+  normal: { label: 'Normal', color: '#16A34A', bgColor: '#DCFCE7', cardBg: '#16A34A' },
+  express: { label: 'Express', color: '#D97706', bgColor: '#FEF3C7', cardBg: '#D97706' },
+  urgente: { label: 'Urgente', color: '#C2410C', bgColor: '#FFEDD5', cardBg: '#C2410C' },
 };
 
 export function DeliveryHomeScreen({ navigation }: DeliveryHomeScreenProps) {
-  const { activeOrder } = useActiveOrder();
+  const { activeOrder, activeOrders } = useActiveOrder();
   const { orders: availableOrders, refetch, isLoading } = useAvailableOrdersSimple();
   const { orders: deliveredOrders, refetch: refetchDelivered } = useDeliveredOrders();
   const { profile } = useUserProfile();
@@ -80,43 +80,49 @@ export function DeliveryHomeScreen({ navigation }: DeliveryHomeScreenProps) {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[appColors.primary]} />
           }
         >
-          {activeOrder && (
+          {activeOrders.length > 0 && (
             <View className="px-4 pt-4">
               <View className="flex-row items-center mb-3">
                 <Clock size={18} color={appColors.primary} />
-                <Text className="text-base font-bold text-text ml-2">Pedido activo</Text>
+                <Text className="text-base font-bold text-text ml-2">Pedidos activos ({activeOrders.length})</Text>
               </View>
-              <Pressable
-                onPress={() => navigation.navigate('DeliveryOrderFlow', { orderId: activeOrder.id })}
-                style={{ backgroundColor: '#16A34A', borderRadius: 16, padding: 16 }}
-              >
-                <View className="flex-row items-center justify-between">
-                  <View>
-                    <Text className="text-white text-lg font-bold">#{activeOrder.publicId}</Text>
-                    <View className="flex-row items-center mt-2">
+              {activeOrders.map((order) => {
+                const priority = PRIORITY_CONFIG[order.priority] || PRIORITY_CONFIG.normal;
+                return (
+                  <Pressable
+                    key={order.id}
+                    onPress={() => navigation.navigate('DeliveryOrderFlow', { orderId: order.id })}
+                    style={{ backgroundColor: priority.cardBg, borderRadius: 16, padding: 16, marginBottom: 12 }}
+                  >
+                    <View className="flex-row items-center justify-between mb-2">
+                      <View className="flex-row items-center">
+                        <Text className="text-white text-lg font-bold">#{order.publicId}</Text>
+                        <View className="ml-3 px-2 py-0.5 rounded-full" style={{ backgroundColor: 'rgba(255,255,255,0.25)' }}>
+                          <Text className="text-white text-xs font-bold">{priority.label}</Text>
+                        </View>
+                      </View>
+                    </View>
+                    <View className="flex-row items-center mt-1">
                       <Text className="text-white/90 text-sm">Recoger: </Text>
-                      <Text className="text-white/90 text-sm font-medium" numberOfLines={1}>
-                        {activeOrder.originAddress || 'Cargando...'}
+                      <Text className="text-white/90 text-sm font-medium flex-1" numberOfLines={1}>
+                        {order.originAddress || 'Cargando...'}
                       </Text>
                     </View>
                     <View className="flex-row items-center mt-1">
                       <Text className="text-white/90 text-sm">Entregar: </Text>
-                      <Text className="text-white/90 text-sm font-medium" numberOfLines={1}>
-                        {activeOrder.destAddress || 'Cargando...'}
+                      <Text className="text-white/90 text-sm font-medium flex-1" numberOfLines={1}>
+                        {order.destAddress || 'Cargando...'}
                       </Text>
                     </View>
-                  </View>
-                  <View className="bg-white/30 rounded-full p-3">
-                    <ArrowRight size={24} color="white" />
-                  </View>
-                </View>
-                <View className="mt-3 pt-3 border-t border-white/20">
-                  <Text className="text-white/60 text-xs">Tu ganancia</Text>
-                  <Text className="text-white text-xl font-bold">
-                    {typeof activeOrder.driverEarning === 'number' ? `${activeOrder.driverEarning} créditos` : 'N/A'}
-                  </Text>
-                </View>
-              </Pressable>
+                    <View className="mt-3 pt-3 border-t border-white/20">
+                      <Text className="text-white/60 text-xs">Tu ganancia</Text>
+                      <Text className="text-white text-xl font-bold">
+                        {typeof order.driverEarning === 'number' ? `${order.driverEarning} créditos` : 'N/A'}
+                      </Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
             </View>
           )}
 
