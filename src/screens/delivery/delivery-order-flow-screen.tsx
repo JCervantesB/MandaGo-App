@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, StyleSheet, Alert, Pressable, Text } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, MessageCircle } from 'lucide-react-native';
+import { ArrowLeft } from 'lucide-react-native';
 import FullScreenDeliveryMap, { RouteType } from '@/components/delivery-components/FullScreenDeliveryMap';
 import { DeliveryBottomSheet } from '@/components/delivery-components/DeliveryBottomSheet';
 import { useActiveOrder } from '@/hooks/use-delivery-order-flow';
@@ -32,10 +32,12 @@ function getRouteType(status: string): RouteType {
   }
 }
 
+// Pantalla de flujo de la orden de entrega.
 export function DeliveryOrderFlowScreen({ route, navigation }: DeliveryOrderFlowScreenProps) {
   const { activeOrders, isLoading, refetch, updateStatus } = useActiveOrder();
   const [order, setOrder] = useState<DeliveryOrder | null>(null);
 
+  // Obtener la información de la orden específica desde el servidor.
   useEffect(() => {
     const orderId = route?.params?.orderId;
     if (!orderId) return;
@@ -46,6 +48,7 @@ export function DeliveryOrderFlowScreen({ route, navigation }: DeliveryOrderFlow
       return;
     }
 
+    // Obtener la información de la orden específica desde el servidor.
     const fetchSpecificOrder = async () => {
       try {
         const response = await fetch(`${API_BASE_URL}/driver/orders/${orderId}`, {
@@ -56,30 +59,33 @@ export function DeliveryOrderFlowScreen({ route, navigation }: DeliveryOrderFlow
           setOrder(found);
         }
       } catch (err) {
-        console.error('Error fetching order:', err);
+        console.error('Error al obtener la información de la orden:', err);
       }
     };
 
     fetchSpecificOrder();
   }, [route?.params?.orderId, activeOrders]);
 
-  useEffect(() => {
+  // Manejar actualizaciones de estado de la orden y ubicación del conductor.
+   useEffect(() => {
     const socket = socketClient.connect();
     if (!socket) return;
 
     socketClient.joinDriversRoom();
 
+    // Manejar actualizaciones de estado de la orden.
     const handleOrderUpdate = (data: { orderId: number; status: string }) => {
-      console.log('[DeliveryOrderFlow] order:updated received:', data);
+      console.log('[DeliveryOrderFlow] Actualización de estado de la orden:', data);
       if (order && data.orderId === order.id) {
         setOrder((prev) => prev ? { ...prev, status: data.status as OrderStatus } : null);
       }
       refetch();
     };
 
+    // Manejar actualizaciones de ubicación del conductor.
     const handleDriverLocationUpdate = (data: { orderId: number; lat: number; lon: number }) => {
       if (order && data.orderId === order.id) {
-        console.log('[DeliveryOrderFlow] driver location update for order:', data.orderId);
+        console.log('[DeliveryOrderFlow] Actualización de ubicación del conductor:', data);
       }
     };
 
@@ -92,6 +98,7 @@ export function DeliveryOrderFlowScreen({ route, navigation }: DeliveryOrderFlow
     };
   }, [order, refetch]);
 
+  // Manejar la acción de asignar de la orden.
   const handleClaimOrder = async (orderId: number): Promise<boolean> => {
     try {
       const response = await fetch(`${API_BASE_URL}/driver/orders/${orderId}/claim`, {
@@ -109,6 +116,7 @@ export function DeliveryOrderFlowScreen({ route, navigation }: DeliveryOrderFlow
     }
   };
 
+  // Manejar la acción de abandonar de la orden.
   const handleAbandonOrder = async (orderId: number): Promise<boolean> => {
     try {
       const response = await fetch(`${API_BASE_URL}/driver/orders/${orderId}/abandon`, {
@@ -126,6 +134,7 @@ export function DeliveryOrderFlowScreen({ route, navigation }: DeliveryOrderFlow
     }
   };
 
+  // Manejar la acción de abrir chat con el cliente.
   const handleOpenChat = async () => {
     if (!order) return;
     try {
@@ -146,6 +155,7 @@ export function DeliveryOrderFlowScreen({ route, navigation }: DeliveryOrderFlow
     }
   };
 
+  // Manejar la acción de aceptar de la orden.
   const handleAction = async (action: 'claim' | 'accept' | 'start_route' | 'mark_picked' | 'start_delivery' | 'confirm_delivery' | 'abandon') => {
     if (!order) return;
 
